@@ -1,0 +1,47 @@
+[package]
+name = "dev-ci"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+readme = "README.md"
+license = "Apache-2.0"
+
+authors = [
+    "James Gober <me@jamesgober.com>"
+]
+
+description = "CI workflow generator and GitHub Action for the dev-* verification suite. Generates calibrated CI pipelines and runs the suite end-to-end on pull requests."
+
+keywords = [
+    "ci",
+    "github-actions",
+    "workflow",
+    "verification",
+    "ai-tools"
+]
+
+categories = [
+    "development-tools",
+    "development-tools::testing",
+    "command-line-utilities"
+]
+
+documentation = "https://docs.rs/dev-ci"
+repository = "https://github.com/jamesgober/dev-ci"
+homepage = "https://github.com/jamesgober/dev-ci"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+dev-report = { version = "0.9", path = "../dev-report" }
+
+[dev-dependencies]
+
+[features]
+default = []
+
+[profile.release]
+opt-level = 3
+lto = "thin"
