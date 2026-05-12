@@ -543,9 +543,23 @@ fn yaml_scalar(s: &str) -> String {
         });
     let starts_with_indicator = matches!(
         s.chars().next(),
-        Some('-') | Some('?') | Some(':') | Some(',') | Some('[') | Some(']') | Some('{')
-            | Some('}') | Some('#') | Some('&') | Some('*') | Some('!') | Some('|') | Some('>')
-            | Some('%') | Some('@') | Some('`')
+        Some('-')
+            | Some('?')
+            | Some(':')
+            | Some(',')
+            | Some('[')
+            | Some(']')
+            | Some('{')
+            | Some('}')
+            | Some('#')
+            | Some('&')
+            | Some('*')
+            | Some('!')
+            | Some('|')
+            | Some('>')
+            | Some('%')
+            | Some('@')
+            | Some('`')
     );
     if is_plain_charset && !starts_with_indicator {
         s.to_string()
@@ -696,7 +710,9 @@ mod tests {
 
     #[test]
     fn yaml_scalar_quotes_branch_with_comma() {
-        let yaml = Generator::new().branches(["main", "release,foo"]).generate();
+        let yaml = Generator::new()
+            .branches(["main", "release,foo"])
+            .generate();
         assert!(yaml.contains("branches: [main, 'release,foo']"));
     }
 
