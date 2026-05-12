@@ -115,4 +115,6 @@ jobs:
           grep -q "actions/checkout@v5"            /tmp/dev-ci-sample.yml
           grep -q "MSRV (Rust 1.85)"               /tmp/dev-ci-sample.yml
           grep -q "Swatinem/rust-cache@v2"         /tmp/dev-ci-sample.yml
-          grep -q "git clone --depth 1 https://"   /tmp/dev-ci-sample.yml
+          # v0.9.2 introduced YAML/shell quoting on the git clone args
+          # so the URL is now single-quoted: `'https://...'`.
+          grep -q "git clone --depth 1 'https://"  /tmp/dev-ci-sample.yml
