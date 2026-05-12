@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-12
+
+Documentation polish and CLI cookbook. No code changes.
+
+### Changed
+
+- README header standardized: Rust logo image, MSRV badge between CI and docs.rs (was at the end of the badge list, lowercase label), copyright block at bottom.
+- Subtitle now reads `CI ORCHESTRATION FOR RUST CRATES` (was `CI WORKFLOW GENERATOR FOR RUST`).
+- Tagline rewritten to lead with the developer outcome — calibrated workflows, library + CLI, byte-deterministic output.
+- `## CLI` section significantly expanded: install instructions, eight named usage patterns (defaults, multi-OS matrix, path-dep wiring, preview-without-write, custom output, workspace, branch filter, no-cache), exit-code reference, and a review-friendly `--print | diff` pattern.
+- `## The dev-* suite` retitled to `The dev-* collection`; the stale `dev-fuzz, dev-flaky, dev-mutate — landing soon` line replaced with their actual crate links (all three shipped).
+- `Cargo.toml` description rewritten: leads with the developer outcome (calibrated GitHub Actions workflow), names what the crate ships (library + CLI), highlights determinism.
+- `Cargo.toml` keywords retuned: dropped `verification` and `ai-tools`, added `generator` and `rust` for crates.io search.
+
+### Added
+
+- "Part of the `dev-*` verification collection" block on the README, under the intro, linking the umbrella `dev-tools` crate.
+
+[0.9.1]: https://github.com/jamesgober/dev-ci/releases/tag/v0.9.1
+
 ## [0.9.0] - 2026-05-12
 
 Foundation release. Replaces the `0.1.0` name-claim with the full

@@ -1,32 +1,42 @@
 <h1 align="center">
+    <img width="99" alt="Rust logo" src="https://raw.githubusercontent.com/jamesgober/rust-collection/72baabd71f00e14aa9184efcb16fa3deddda3a0a/assets/rust-logo.svg">
+    <br>
     <strong>dev-ci</strong>
     <br>
-    <sup><sub>CI WORKFLOW GENERATOR FOR RUST</sub></sup>
+    <sup><sub>CI ORCHESTRATION FOR RUST CRATES</sub></sup>
 </h1>
-
 <p align="center">
     <a href="https://crates.io/crates/dev-ci"><img alt="crates.io" src="https://img.shields.io/crates/v/dev-ci.svg"></a>
     <a href="https://crates.io/crates/dev-ci"><img alt="downloads" src="https://img.shields.io/crates/d/dev-ci.svg"></a>
-    <a href="https://docs.rs/dev-ci"><img alt="docs.rs" src="https://docs.rs/dev-ci/badge.svg"></a>
     <a href="https://github.com/jamesgober/dev-ci/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jamesgober/dev-ci/actions/workflows/ci.yml/badge.svg"></a>
-    <img alt="MSRV" src="https://img.shields.io/badge/msrv-1.85%2B-blue.svg?style=flat-square" title="Rust Version">
+    <img alt="MSRV" src="https://img.shields.io/badge/MSRV-1.85%2B-blue.svg?style=flat-square" title="Rust Version">
+    <a href="https://docs.rs/dev-ci"><img alt="docs.rs" src="https://docs.rs/dev-ci/badge.svg"></a>
 </p>
 
 <p align="center">
-    CI workflow generator for the <code>dev-*</code> verification suite.
+    <strong>Generate calibrated GitHub Actions workflows for Rust crates.</strong> Library API <em>plus</em> CLI binary. Byte-deterministic output. <code>actions/checkout@v5</code> pinned everywhere.
 </p>
+
+<br>
+
+<div align="center">
+    <strong>Part of the <a href="https://crates.io/crates/dev-tools"><code>dev-*</code></a> verification collection.</strong><br>
+    <sub>Also available as the <code>ci</code> feature of the <a href="https://crates.io/crates/dev-tools"><code>dev-tools</code></a> umbrella crate &mdash; one dependency, every verification layer.</sub>
+</div>
+
+<br>
 
 ---
 
 ## What it does
 
 `dev-ci` generates calibrated CI workflow files (currently GitHub
-Actions; others in the roadmap) from a structured Rust API and a CLI
-front-end. One source of truth, byte-deterministic output, every
-checkout pinned at `actions/checkout@v5`.
+Actions; other platforms in the roadmap) from a structured Rust API
+plus a CLI front-end. One source of truth, byte-deterministic output,
+every checkout pinned at `actions/checkout@v5`.
 
 The runtime side — a GitHub Action that runs the entire `dev-*`
-verification suite end-to-end inside one job and uploads SARIF —
+verification collection end-to-end inside one job and uploads SARIF —
 lands later in the 0.9.x line.
 
 ## Quick start (CLI)
@@ -115,13 +125,105 @@ safe to assert against in unit tests.
 
 ## CLI
 
-```text
-dev-ci generate [OPTIONS]
+`dev-ci` ships a CLI binary as well as the library. Install it once:
+
+```bash
+cargo install dev-ci
 ```
+
+Then `dev-ci --help` prints the full reference; the patterns below
+cover the common use cases.
+
+### Install
+
+```bash
+cargo install dev-ci                 # latest release from crates.io
+cargo install --git https://github.com/jamesgober/dev-ci   # tip of main
+```
+
+### One-shot, accept the defaults
+
+```bash
+dev-ci generate
+```
+
+Writes `.github/workflows/ci.yml` with: `actions/checkout@v5`, a
+single `test` job on `ubuntu-latest`, `cargo build`, `cargo test`,
+and the `Swatinem/rust-cache@v2` action enabled.
+
+### Multi-OS matrix with the standard quality jobs
+
+```bash
+dev-ci generate \
+    --matrix ubuntu-latest,macos-latest,windows-latest \
+    --with clippy,fmt,docs,msrv \
+    --msrv 1.85
+```
+
+You get `test` (3 OSes) plus `clippy`, `fmt`, `docs`, and `msrv` as
+their own jobs.
+
+### Crate that uses path-deps to sibling repos
+
+```bash
+dev-ci generate \
+    --features fixtures,bench,coverage \
+    --path-dep dev-report=https://github.com/jamesgober/dev-report.git \
+    --path-dep dev-fixtures=https://github.com/jamesgober/dev-fixtures.git \
+    --path-dep dev-bench=https://github.com/jamesgober/dev-bench.git
+```
+
+Each `--path-dep` adds a `git clone --depth 1` step that runs before
+`cargo`, dropping the sibling into `..` so the path-dep resolves.
+
+### Preview without writing
+
+```bash
+dev-ci generate --print            # send YAML to stdout
+dev-ci generate --output -         # alias for --print
+```
+
+Pipe into `kdiff3`, `delta`, or your editor when you're not ready to
+overwrite the existing workflow.
+
+### Custom output path or workflow name
+
+```bash
+dev-ci generate \
+    --output .github/workflows/quality.yml \
+    --workflow-name "Quality Gates"
+```
+
+### Workspace project
+
+```bash
+dev-ci generate --workspace
+```
+
+Adds `--workspace` to every cargo call in the workflow.
+
+### Restrict trigger branches
+
+```bash
+dev-ci generate --branches main,release/*
+```
+
+Both `push` and `pull_request` are filtered to the matching branches.
+
+### Disable the cache action
+
+```bash
+dev-ci generate --no-cache
+```
+
+Omits the `Swatinem/rust-cache@v2` step. Use when the cache layer
+itself is what you're trying to debug.
+
+### Flag reference
 
 | Flag                              | Equivalent builder method                  |
 |-----------------------------------|--------------------------------------------|
-| `--target github-actions`         | `target(Target::GitHubActions)`            |
+| `--target github-actions`         | `target(Target::GitHubActions)` (default)  |
 | `--workflow-name <NAME>`          | `workflow_name(NAME)`                      |
 | `--branches main,release/*`       | `branches([...])`                          |
 | `--matrix ubuntu-latest,macos-latest` | `matrix_os([...])`                     |
@@ -135,6 +237,26 @@ dev-ci generate [OPTIONS]
 | `--path-dep name=url`             | `with_path_dep(PathDep::new(name, url))`   |
 | `--output <PATH>` / `--print`     | Write to file (default `.github/workflows/ci.yml`) or stdout. |
 
+### Exit codes
+
+| Code | Meaning                                            |
+|:---:|----------------------------------------------------|
+| `0` | Workflow generated and written successfully.       |
+| `1` | Bad arguments, unknown job in `--with`, or I/O error writing the output file. The reason is printed to stderr. |
+
+### Combine with `--print` for review workflows
+
+The CLI is deterministic, so it composes well with code review:
+
+```bash
+# Diff against what's checked in
+dev-ci generate --print | diff -u .github/workflows/ci.yml -
+
+# Apply only if the diff looks right
+dev-ci generate                       # writes the file
+git add .github/workflows/ci.yml
+```
+
 ## Examples
 
 | File                              | What it shows                                                       |
@@ -144,21 +266,25 @@ dev-ci generate [OPTIONS]
 | `examples/path_deps.rs`           | The sibling-clone pattern the dev-* suite itself uses.              |
 | `examples/write_to_disk.rs`       | Generate and write the workflow to a file.                          |
 
-## The `dev-*` suite
+## The `dev-*` collection
 
-`dev-ci` is part of the wider `dev-*` verification suite:
+`dev-ci` ships independently and is also re-exported by the
+[`dev-tools`](https://crates.io/crates/dev-tools) umbrella crate as
+the `ci` feature. Sister crates cover the other verification
+dimensions:
 
-- [`dev-report`](https://github.com/jamesgober/dev-report) — foundation schema
-- [`dev-tools`](https://github.com/jamesgober/dev-tools) — umbrella crate
-- [`dev-fixtures`](https://github.com/jamesgober/dev-fixtures) — test environments
-- [`dev-bench`](https://github.com/jamesgober/dev-bench) — performance
-- [`dev-async`](https://github.com/jamesgober/dev-async) — async validation
-- [`dev-stress`](https://github.com/jamesgober/dev-stress) — load testing
-- [`dev-chaos`](https://github.com/jamesgober/dev-chaos) — failure injection
-- [`dev-coverage`](https://github.com/jamesgober/dev-coverage) — test coverage
-- [`dev-security`](https://github.com/jamesgober/dev-security) — vulnerability scanning
-- [`dev-deps`](https://github.com/jamesgober/dev-deps) — dependency health
-- `dev-fuzz`, `dev-flaky`, `dev-mutate` — landing soon
+- [`dev-report`](https://crates.io/crates/dev-report) &mdash; report schema everything emits
+- [`dev-fixtures`](https://crates.io/crates/dev-fixtures) &mdash; deterministic test fixtures
+- [`dev-bench`](https://crates.io/crates/dev-bench) &mdash; performance and regression detection
+- [`dev-async`](https://crates.io/crates/dev-async) &mdash; async runtime verification
+- [`dev-stress`](https://crates.io/crates/dev-stress) &mdash; stress and soak workloads
+- [`dev-chaos`](https://crates.io/crates/dev-chaos) &mdash; fault injection and recovery testing
+- [`dev-coverage`](https://crates.io/crates/dev-coverage) &mdash; code coverage with regression gates
+- [`dev-security`](https://crates.io/crates/dev-security) &mdash; CVE / license / banned-crate audit
+- [`dev-deps`](https://crates.io/crates/dev-deps) &mdash; unused / outdated dep detection
+- [`dev-fuzz`](https://crates.io/crates/dev-fuzz) &mdash; fuzz testing workflow
+- [`dev-flaky`](https://crates.io/crates/dev-flaky) &mdash; flaky-test detection
+- [`dev-mutate`](https://crates.io/crates/dev-mutate) &mdash; mutation testing
 
 ## Status
 
@@ -175,3 +301,14 @@ the MSRV job in CI.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+
+
+
+<!-- COPYRIGHT
+---------------------------------->
+<div align="center">
+    <br>
+    <h2></h2>
+    Copyright &copy; 2026 James Gober.
+</div>
