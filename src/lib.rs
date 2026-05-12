@@ -345,7 +345,7 @@ impl Generator {
     }
 
     fn write_header(&self, out: &mut String) {
-        writeln!(out, "name: {}", self.workflow_name).unwrap();
+        writeln!(out, "name: {}", yaml_scalar(&self.workflow_name)).unwrap();
         out.push('\n');
         out.push_str("on:\n");
         out.push_str("  push:\n");
@@ -449,10 +449,12 @@ impl Generator {
             out.push_str("      - name: Check out sibling crates (path deps)\n");
             out.push_str("        run: |\n");
             for dep in &self.path_deps {
+                let target = format!("../{}", dep.name);
                 writeln!(
                     out,
-                    "          git clone --depth 1 {} ../{}",
-                    dep.repo_url, dep.name
+                    "          git clone --depth 1 {} {}",
+                    shell_arg(&dep.repo_url),
+                    shell_arg(&target),
                 )
                 .unwrap();
             }
@@ -519,9 +521,66 @@ fn write_branch_list(out: &mut String, indent: &str, branches: &[String]) {
         if i > 0 {
             out.push_str(", ");
         }
-        out.push_str(b);
+        out.push_str(&yaml_scalar(b));
     }
     out.push_str("]\n");
+}
+
+/// Emit a YAML plain scalar if the input is unambiguous, otherwise
+/// single-quote it (with `'` doubled per the YAML spec).
+///
+/// The allowed plain-scalar charset is alphanumerics plus
+/// `- _ . / * + = ~` (covers common branch patterns like
+/// `release/*`, version tags, and workflow names). Anything else, or
+/// any string that starts with a YAML indicator (`* & ? ! | > # @
+/// \` `, `-`, `?`, `:`, `,`, `[`, `]`, `{`, `}`, `%`), gets
+/// single-quoted to keep the output well-formed regardless of user
+/// input.
+fn yaml_scalar(s: &str) -> String {
+    let is_plain_charset = !s.is_empty()
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '*' | '+' | '=' | '~')
+        });
+    let starts_with_indicator = matches!(
+        s.chars().next(),
+        Some('-') | Some('?') | Some(':') | Some(',') | Some('[') | Some(']') | Some('{')
+            | Some('}') | Some('#') | Some('&') | Some('*') | Some('!') | Some('|') | Some('>')
+            | Some('%') | Some('@') | Some('`')
+    );
+    if is_plain_charset && !starts_with_indicator {
+        s.to_string()
+    } else {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('\'');
+        for ch in s.chars() {
+            if ch == '\'' {
+                out.push_str("''");
+            } else {
+                out.push(ch);
+            }
+        }
+        out.push('\'');
+        out
+    }
+}
+
+/// Single-quote a value for inclusion in a POSIX `sh` / `bash` command.
+///
+/// Single-quoting in POSIX shell is literal — nothing inside is
+/// interpreted, so the only escape needed is for embedded `'`, which
+/// we replace with `'\''` (close-quote, escaped quote, re-open).
+fn shell_arg(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 #[cfg(test)]
@@ -614,11 +673,46 @@ mod tests {
             .generate();
         assert!(yaml.contains("Check out sibling crates (path deps)"));
         assert!(yaml.contains(
-            "git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report"
+            "git clone --depth 1 'https://github.com/jamesgober/dev-report.git' '../dev-report'"
         ));
         assert!(yaml.contains(
-            "git clone --depth 1 https://github.com/jamesgober/dev-tools.git ../dev-tools"
+            "git clone --depth 1 'https://github.com/jamesgober/dev-tools.git' '../dev-tools'"
         ));
+    }
+
+    #[test]
+    fn yaml_scalar_quotes_workflow_name_with_colon() {
+        let yaml = Generator::new()
+            .workflow_name("Build: CI Pipeline")
+            .generate();
+        assert!(yaml.contains("name: 'Build: CI Pipeline'"));
+    }
+
+    #[test]
+    fn yaml_scalar_doubles_embedded_single_quote() {
+        let yaml = Generator::new().workflow_name("Don't break").generate();
+        assert!(yaml.contains("name: 'Don''t break'"));
+    }
+
+    #[test]
+    fn yaml_scalar_quotes_branch_with_comma() {
+        let yaml = Generator::new().branches(["main", "release,foo"]).generate();
+        assert!(yaml.contains("branches: [main, 'release,foo']"));
+    }
+
+    #[test]
+    fn yaml_scalar_quotes_branch_starting_with_indicator() {
+        let yaml = Generator::new().branches(["main", "*release"]).generate();
+        assert!(yaml.contains("branches: [main, '*release']"));
+    }
+
+    #[test]
+    fn shell_arg_escapes_embedded_single_quote() {
+        let yaml = Generator::new()
+            .with_path_dep(PathDep::new("weird-name", "https://x.com/o'malley.git"))
+            .generate();
+        // Single quote escape sequence: '\''  (close-quote, backslash, quote, re-open).
+        assert!(yaml.contains("'https://x.com/o'\\''malley.git' '../weird-name'"));
     }
 
     #[test]
@@ -718,7 +812,7 @@ mod tests {
             .generate();
 
         for needle in [
-            "name: Full CI",
+            "name: 'Full CI'",
             "actions/checkout@v5",
             "branches: [main, develop]",
             "[ubuntu-latest, macos-latest, windows-latest]",
@@ -730,7 +824,7 @@ mod tests {
             "Build (no default features)",
             "Build (all features)",
             "Test (all features)",
-            "git clone --depth 1 https://example.com/dev-report.git ../dev-report",
+            "git clone --depth 1 'https://example.com/dev-report.git' '../dev-report'",
             "Swatinem/rust-cache@v2",
         ] {
             assert!(
