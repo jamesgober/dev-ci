@@ -1,6 +1,6 @@
 [package]
 name = "dev-ci"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.85"
 readme = "README.md"
@@ -34,8 +34,13 @@ homepage = "https://github.com/jamesgober/dev-ci"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[[bin]]
+name = "dev-ci"
+path = "src/bin/dev_ci.rs"
+
 [dependencies]
 dev-report = { version = "0.9", path = "../dev-report" }
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 

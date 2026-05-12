@@ -1,6 +1,11 @@
-//! Minimal example: generate a basic GitHub Actions workflow.
+//! Generate a small but complete GitHub Actions workflow.
 //!
-//! Run with: `cargo run --example basic`
+//! ```text
+//! cargo run --example basic
+//! ```
+//!
+//! Output is what most pure-Rust crates need: `test` (single OS) plus
+//! the standard quality gates (`clippy`, `fmt`, `docs`, `msrv`).
 
 use dev_ci::{Generator, Target};
 
@@ -9,6 +14,7 @@ fn main() {
         .target(Target::GitHubActions)
         .with_clippy()
         .with_fmt()
+        .with_docs()
         .with_msrv("1.85")
         .generate();
 
