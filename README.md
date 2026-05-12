@@ -107,7 +107,7 @@ let yaml = Generator::new()
     .with_path_dep(PathDep::new("dev-tools",  "https://github.com/jamesgober/dev-tools.git"))
     .generate();
 
-assert!(yaml.contains("git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report"));
+assert!(yaml.contains("git clone --depth 1 'https://github.com/jamesgober/dev-report.git' '../dev-report'"));
 ```
 
 The clones land in a single `run: |` step right after

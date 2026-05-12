@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-05-12
+
+Hardening release surfaced by the post-polish audit pass.
+
+### Fixed
+
+- YAML scalar emission now single-quotes values that contain non-plain characters or start with a YAML indicator (`* & ? ! | > # @ : , [ ] { } %`). Previously `workflow_name("Build: CI")` would emit `name: Build: CI` and produce an invalid workflow file; it now emits `name: 'Build: CI'`. Same for branch names with commas, leading `*`, or other indicators.
+- `git clone` commands generated for `--path-dep` arguments now POSIX-shell-quote both the URL and the target path. A repo URL containing a single quote (rare but possible in mirror paths) used to corrupt the generated `run:` block; it now round-trips correctly via the `'\\''` escape.
+
+### Internal
+
+- Two new helpers in `lib.rs`: `yaml_scalar()` (YAML plain-scalar safety check + single-quote fallback) and `shell_arg()` (POSIX shell single-quote with `'` escape).
+- Five new tests cover the quoting behavior:
+  - `yaml_scalar_quotes_workflow_name_with_colon`
+  - `yaml_scalar_doubles_embedded_single_quote`
+  - `yaml_scalar_quotes_branch_with_comma`
+  - `yaml_scalar_quotes_branch_starting_with_indicator`
+  - `shell_arg_escapes_embedded_single_quote`
+- Existing `path_dep_clone_step_emitted` and `full_kitchen_sink_yaml_round_trip` tests updated for the now-quoted output.
+
+### Notes for callers
+
+If you previously asserted on the exact unquoted form of the generated YAML (e.g. `assert!(yaml.contains("git clone --depth 1 https://example.com/foo.git ../foo"))`), update to the quoted form: `assert!(yaml.contains("git clone --depth 1 'https://example.com/foo.git' '../foo'"))`. Plain branch names like `main` and `release/*` continue to emit unquoted.
+
+[0.9.2]: https://github.com/jamesgober/dev-ci/releases/tag/v0.9.2
+
 ## [0.9.1] - 2026-05-12
 
 Documentation polish and CLI cookbook. No code changes.
