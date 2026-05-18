@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-05-18
+
+Library / binary MSRV split. Library MSRV drops to 1.75; binary stays at 1.85.
+
+### Changed
+
+- **`clap` is now an optional dependency gated by a new `cli` feature.** The `Generator` + `PathDep` library API does not depend on clap and compiles cleanly on Rust 1.75. The `dev-ci` CLI binary still requires clap (and therefore Rust 1.85) due to clap 4.6+'s `clap_derive` / `clap_lex` transitive chain moving to edition2024.
+- **`[[bin]] required-features = ["cli"]`** ensures the binary only builds when the `cli` feature is enabled.
+- **`default = ["cli"]`** keeps `cargo install dev-ci` working as before (defaults pull clap, build binary). Library consumers can disable defaults to stay at MSRV 1.75: `dev-ci = { version = "0.9", default-features = false }`.
+- **`rust-version` lowered from `1.85` to `1.75` in `Cargo.toml`** — reflects the library's MSRV. Cargo will fail with a clear edition2024 error if a user tries to compile dev-ci with the `cli` feature on a toolchain older than 1.85.
+- README MSRV badge updated to reflect the library/binary split.
+
+### Notes
+
+- `cargo install dev-ci` still works the same way (default features include `cli` → pulls clap → requires 1.85). End-user install experience is unchanged.
+- Downstream library consumers (`dev-tools` with `ci` feature, or anyone using the `Generator` API directly) get MSRV 1.75 when they disable defaults on the dev-ci dependency.
+- No public API change. `Generator`, `PathDep`, and `Target` types are byte-equivalent across this release.
+
+[0.9.3]: https://github.com/jamesgober/dev-ci/releases/tag/v0.9.3
+
 ## [0.9.2] - 2026-05-12
 
 Hardening release surfaced by the post-polish audit pass.

@@ -1,8 +1,8 @@
 [package]
 name = "dev-ci"
-version = "0.9.2"
+version = "0.9.3"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.75"
 readme = "README.md"
 license = "Apache-2.0"
 
@@ -34,18 +34,32 @@ homepage = "https://github.com/jamesgober/dev-ci"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+# Binary is gated behind the `cli` feature so library consumers
+# (cargo add dev-ci) can use the `Generator` + `PathDep` API at
+# MSRV 1.75 without pulling clap's 1.85-locked transitive chain.
+# `cargo install dev-ci` builds with `default = ["cli"]` and gets
+# the binary.
 [[bin]]
 name = "dev-ci"
 path = "src/bin/dev_ci.rs"
+required-features = ["cli"]
 
 [dependencies]
 dev-report = { version = "0.9", path = "../dev-report" }
-clap = { version = "4", features = ["derive"] }
+# clap is optional + gated by `cli`. The library half of dev-ci
+# (Generator, PathDep, etc.) does not use clap and compiles on
+# MSRV 1.75. Pulling clap forces MSRV 1.85 due to clap 4.6+ /
+# clap_derive / clap_lex moving to edition2024.
+clap = { version = "4", features = ["derive"], optional = true }
 
 [dev-dependencies]
 
 [features]
-default = []
+# Most users want the binary (`cargo install dev-ci`). Library-only
+# consumers (`cargo add dev-ci --no-default-features`) get the
+# 1.75-compatible Generator API without clap.
+default = ["cli"]
+cli = ["dep:clap"]
 
 [profile.release]
 opt-level = 3
