@@ -111,7 +111,32 @@ assert!(yaml.contains("git clone --depth 1 'https://github.com/jamesgober/dev-re
 ```
 
 The clones land in a single `run: |` step right after
-`actions/checkout`, before the toolchain install.
+`actions/checkout`, before the toolchain install. The URL and target
+directory are single-quoted for a POSIX shell, and the step sets
+`shell: bash` so it runs the same way on Windows runners, whose default
+shell is PowerShell.
+
+## MSRV job
+
+`with_msrv("1.75")` adds a job that builds with
+`dtolnay/rust-toolchain@1.75`. If the repository has no committed
+`Cargo.lock`, the job first runs `cargo generate-lockfile` on stable
+with `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback`, which picks
+dependency versions that support the `rust-version` in your
+`Cargo.toml`. Without that step the old toolchain resolves the newest
+release of every dependency and can fail on one that needs a newer
+compiler, even when your crate is fine. Keep `rust-version` equal to the
+MSRV you pass. A committed `Cargo.lock` is used unchanged.
+
+## Quoting
+
+Every user-supplied value is quoted where YAML or the shell needs it:
+workflow names, branch filters and matrix entries are YAML-quoted when
+they contain special characters or would be read as a bool, null, or
+number (a branch named `1.10` stays the string `1.10`); a `--features`
+value with spaces or shell metacharacters is single-quoted for the shell
+and that step runs under `bash`. Plain values such as `main`,
+`release/*`, `ubuntu-latest` and `serde/std,derive` are emitted as is.
 
 ## Determinism
 
@@ -241,8 +266,13 @@ itself is what you're trying to debug.
 
 | Code | Meaning                                            |
 |:---:|----------------------------------------------------|
-| `0` | Workflow generated and written successfully.       |
-| `1` | Bad arguments, unknown job in `--with`, or I/O error writing the output file. The reason is printed to stderr. |
+| `0` | Workflow generated and written successfully (also `--help` / `--version`). |
+| `1` | Invalid values: unknown job in `--with`, `--with msrv` without `--msrv`, an `--msrv` that is not a toolchain name such as `1.75`, a malformed `--path-dep`, or an I/O error writing the output file. The reason is printed to stderr. |
+| `2` | The command line could not be parsed: unknown flag, unknown `--target`, or conflicting flags such as `--print` with `--output`. Usage is printed to stderr. |
+
+Comma-separated lists (`--branches`, `--matrix`, `--with`) are trimmed
+and empty entries are dropped, so `main, dev` and `main,,dev` both mean
+`main` and `dev`.
 
 ### Combine with `--print` for review workflows
 
@@ -295,8 +325,9 @@ subsequent 0.9.x releases.
 
 ## Minimum supported Rust version
 
-`1.85` — pinned in `Cargo.toml` via `rust-version` and verified by
-the MSRV job in CI.
+The library (`default-features = false`) builds on Rust `1.75`, the
+`rust-version` in `Cargo.toml`. The `dev-ci` binary (`cli` feature, on by
+default) depends on clap, whose current releases need Rust `1.85`.
 
 ## License
 

@@ -47,6 +47,18 @@
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
 
+/// Version of this crate as compiled, taken from its `Cargo.toml`.
+///
+/// Lets tools that bundle this crate, such as the `dev` CLI in
+/// `dev-tools`, report the version that is actually linked.
+///
+/// # Example
+///
+/// ```
+/// assert!(!dev_ci::VERSION.is_empty());
+/// ```
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use std::fmt::Write as _;
 
 // ---------------------------------------------------------------------------
@@ -282,6 +294,9 @@ impl Generator {
     /// Matches the pattern the existing dev-* suite uses for its own
     /// CI (each crate clones its siblings into `..`). May be called
     /// repeatedly.
+    ///
+    /// The clone commands are quoted for a POSIX shell and the step sets
+    /// `shell: bash`, so it behaves the same on Windows runners.
     pub fn with_path_dep(mut self, dep: PathDep) -> Self {
         self.path_deps.push(dep);
         self
@@ -306,6 +321,20 @@ impl Generator {
     }
 
     /// Include an MSRV job pinned to the given Rust version.
+    ///
+    /// `version` becomes the `dtolnay/rust-toolchain@<version>` ref, so it
+    /// should be a toolchain name such as `1.75` or `1.75.0`. Unusual
+    /// values are YAML-quoted rather than rejected; the output stays
+    /// well-formed but the action will not resolve them.
+    ///
+    /// When the repository has no committed `Cargo.lock`, the job first
+    /// runs `cargo generate-lockfile` on stable with
+    /// `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback`, so the
+    /// dependency versions respect the `rust-version` in `Cargo.toml`.
+    /// Without that step the old toolchain would pick the newest release
+    /// of every dependency and could fail on one that needs a newer Rust.
+    /// Set `rust-version` to the same value as `version` for this to
+    /// have an effect. A committed `Cargo.lock` is used as is.
     pub fn with_msrv(mut self, version: impl Into<String>) -> Self {
         self.msrv = Some(version.into());
         self
@@ -368,7 +397,7 @@ impl Generator {
             if i > 0 {
                 out.push_str(", ");
             }
-            out.push_str(os);
+            out.push_str(&yaml_scalar(os));
         }
         out.push_str("]\n");
         out.push_str("    steps:\n");
@@ -393,12 +422,19 @@ impl Generator {
         out.push_str("    runs-on: ubuntu-latest\n");
         out.push_str("    steps:\n");
         self.write_common_setup_components(out, Some("clippy"), None);
+        let ws = self.cargo_flags_string(false, false);
         out.push_str("      - name: Clippy (all features)\n");
-        out.push_str("        run: cargo clippy --all-targets --all-features -- -D warnings\n");
+        writeln!(
+            out,
+            "        run: cargo clippy{ws} --all-targets --all-features -- -D warnings"
+        )
+        .unwrap();
         out.push_str("      - name: Clippy (no default features)\n");
-        out.push_str(
-            "        run: cargo clippy --all-targets --no-default-features -- -D warnings\n",
-        );
+        writeln!(
+            out,
+            "        run: cargo clippy{ws} --all-targets --no-default-features -- -D warnings"
+        )
+        .unwrap();
     }
 
     fn write_fmt_job(&self, out: &mut String) {
@@ -421,17 +457,45 @@ impl Generator {
         out.push_str("      RUSTDOCFLAGS: \"-D warnings\"\n");
         out.push_str("    steps:\n");
         self.write_common_setup(out);
-        out.push_str("      - run: cargo doc --all-features --no-deps\n");
+        let ws = self.cargo_flags_string(false, false);
+        writeln!(out, "      - run: cargo doc{ws} --all-features --no-deps").unwrap();
     }
 
+    /// MSRV job.
+    ///
+    /// Without a committed `Cargo.lock`, an old toolchain resolves the
+    /// newest version of every dependency, which may need a newer Rust
+    /// (or a newer Cargo just to read its manifest) and fail the job even
+    /// though the crate itself is fine. The job therefore first resolves
+    /// a lockfile with stable Cargo's MSRV-aware resolver
+    /// (`CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback`, which reads
+    /// `rust-version` from `Cargo.toml`), and only then switches to the
+    /// pinned toolchain. A committed `Cargo.lock` is left untouched.
     fn write_msrv_job(&self, out: &mut String, msrv: &str) {
         writeln!(out, "\n  msrv:").unwrap();
-        writeln!(out, "    name: MSRV (Rust {msrv})").unwrap();
+        writeln!(
+            out,
+            "    name: {}",
+            yaml_block_scalar(&format!("MSRV (Rust {msrv})"))
+        )
+        .unwrap();
         out.push_str("    runs-on: ubuntu-latest\n");
         out.push_str("    steps:\n");
-        self.write_common_setup_components(out, None, Some(msrv));
+        self.write_checkout_and_path_deps(out);
+        out.push_str("      - uses: dtolnay/rust-toolchain@stable\n");
+        out.push_str("      - name: Resolve dependencies compatible with rust-version\n");
+        out.push_str("        shell: bash\n");
+        out.push_str("        run: if [ ! -f Cargo.lock ]; then cargo generate-lockfile; fi\n");
+        out.push_str("        env:\n");
+        out.push_str("          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback\n");
+        self.write_toolchain_and_cache(out, None, Some(msrv));
         let extras = self.cargo_flags_string(true, false);
-        writeln!(out, "      - run: cargo build{extras}").unwrap();
+        writeln!(
+            out,
+            "      - run: {}",
+            yaml_block_scalar(&format!("cargo build{extras}"))
+        )
+        .unwrap();
     }
 
     fn write_common_setup(&self, out: &mut String) {
@@ -444,9 +508,18 @@ impl Generator {
         component: Option<&str>,
         toolchain_pin: Option<&str>,
     ) {
+        self.write_checkout_and_path_deps(out);
+        self.write_toolchain_and_cache(out, component, toolchain_pin);
+    }
+
+    fn write_checkout_and_path_deps(&self, out: &mut String) {
         out.push_str("      - uses: actions/checkout@v5\n");
         if !self.path_deps.is_empty() {
             out.push_str("      - name: Check out sibling crates (path deps)\n");
+            // The arguments are quoted for a POSIX shell. Pin the shell so
+            // the step means the same thing on Windows runners, whose
+            // default shell is PowerShell.
+            out.push_str("        shell: bash\n");
             out.push_str("        run: |\n");
             for dep in &self.path_deps {
                 let target = format!("../{}", dep.name);
@@ -459,8 +532,21 @@ impl Generator {
                 .unwrap();
             }
         }
+    }
+
+    fn write_toolchain_and_cache(
+        &self,
+        out: &mut String,
+        component: Option<&str>,
+        toolchain_pin: Option<&str>,
+    ) {
         let toolchain = toolchain_pin.unwrap_or("stable");
-        writeln!(out, "      - uses: dtolnay/rust-toolchain@{toolchain}").unwrap();
+        writeln!(
+            out,
+            "      - uses: {}",
+            yaml_block_scalar(&format!("dtolnay/rust-toolchain@{toolchain}"))
+        )
+        .unwrap();
         if let Some(c) = component {
             out.push_str("        with:\n");
             writeln!(out, "          components: {c}").unwrap();
@@ -486,8 +572,14 @@ impl Generator {
         } else {
             String::new()
         };
+        let command = format!("cargo {cmd}{flags}{extra} --verbose");
         writeln!(out, "      - name: {name}").unwrap();
-        writeln!(out, "        run: cargo {cmd}{flags}{extra} --verbose").unwrap();
+        if command.contains('\'') {
+            // The feature list was shell-quoted (POSIX rules). Run it under
+            // bash on every OS, including Windows runners.
+            out.push_str("        shell: bash\n");
+        }
+        writeln!(out, "        run: {}", yaml_block_scalar(&command)).unwrap();
     }
 
     /// Builds a flag suffix string (e.g. " --workspace --features foo").
@@ -506,7 +598,17 @@ impl Generator {
             if let Some(f) = &self.features {
                 if !f.is_empty() {
                     s.push_str(" --features ");
-                    s.push_str(f);
+                    // Plain feature lists (`foo,bar`, `serde/std`) stay
+                    // unquoted; anything else is quoted for the shell so
+                    // spaces or metacharacters cannot split or extend the
+                    // command.
+                    if f.chars().all(|c| {
+                        c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '.' | ',' | '/')
+                    }) {
+                        s.push_str(f);
+                    } else {
+                        s.push_str(&shell_arg(f));
+                    }
                 }
             }
         }
@@ -536,8 +638,18 @@ fn write_branch_list(out: &mut String, indent: &str, branches: &[String]) {
 /// \` `, `-`, `?`, `:`, `,`, `[`, `]`, `{`, `}`, `%`), gets
 /// single-quoted to keep the output well-formed regardless of user
 /// input.
+///
+/// Strings that a YAML parser would read as something other than a
+/// string (`true`, `no`, `null`, `~`, `1.10`, `0x1F`, ...) are quoted too,
+/// so a branch named `1.10` is not turned into the number `1.1`. Strings
+/// with control characters (such as a newline) are emitted double-quoted
+/// with escapes, because a single-quoted scalar would fold the newline.
 fn yaml_scalar(s: &str) -> String {
+    if s.chars().any(|c| c.is_control() && c != '\t') {
+        return yaml_double_quoted(s);
+    }
     let is_plain_charset = !s.is_empty()
+        && !yaml_non_string_plain(s)
         && s.chars().all(|c| {
             c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '*' | '+' | '=' | '~')
         });
@@ -576,6 +688,99 @@ fn yaml_scalar(s: &str) -> String {
         out.push('\'');
         out
     }
+}
+
+/// `true` when YAML would resolve the plain scalar `s` to a bool, null,
+/// or number instead of a string (covering both YAML 1.1 and 1.2 forms).
+/// Anything that starts with a digit (after an optional sign or a leading
+/// `.`) counts as numeric; quoting a string that is not really a number
+/// is harmless.
+fn yaml_non_string_plain(s: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "true"
+            | "false"
+            | "yes"
+            | "no"
+            | "on"
+            | "off"
+            | "y"
+            | "n"
+            | "null"
+            | "~"
+            | ".inf"
+            | "+.inf"
+            | "-.inf"
+            | ".nan"
+    ) {
+        return true;
+    }
+    let t = s.trim_start_matches(['+', '-']);
+    let t = t.strip_prefix('.').unwrap_or(t);
+    t.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// YAML double-quoted scalar with escapes for `\`, `"` and control
+/// characters.
+fn yaml_double_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                write!(out, "\\u{:04X}", c as u32).unwrap();
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Emit `s` as the value of a block mapping entry (`name: ...`,
+/// `run: ...`, `uses: ...`).
+///
+/// Block context allows more in a plain scalar than flow context
+/// (spaces, parentheses, quotes after the first character), so ordinary
+/// values such as `cargo build --verbose` or `MSRV (Rust 1.85)` stay
+/// unquoted. A value is quoted when it is empty, has surrounding
+/// whitespace, starts with a YAML indicator, contains `: ` or ` #`,
+/// ends with `:`, or would be read as a bool, null, or number. Control
+/// characters force a double-quoted scalar.
+fn yaml_block_scalar(s: &str) -> String {
+    if s.chars().any(|c| c.is_control()) {
+        return yaml_double_quoted(s);
+    }
+    let needs_quotes = s.is_empty()
+        || s.trim() != s
+        || s.starts_with([
+            '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%',
+            '@', '`',
+        ])
+        || s.contains(": ")
+        || s.contains(" #")
+        || s.ends_with(':')
+        || yaml_non_string_plain(s);
+    if !needs_quotes {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Single-quote a value for inclusion in a POSIX `sh` / `bash` command.
@@ -848,6 +1053,141 @@ mod tests {
                 "missing: {needle}\n--- yaml ---\n{yaml}"
             );
         }
+    }
+
+    #[test]
+    fn matrix_entries_are_yaml_quoted_when_needed() {
+        let yaml = Generator::new()
+            .matrix_os(["ubuntu-latest", "self-hosted, linux", "on"])
+            .generate();
+        assert!(
+            yaml.contains("os: [ubuntu-latest, 'self-hosted, linux', 'on']"),
+            "{yaml}"
+        );
+    }
+
+    #[test]
+    fn yaml_scalar_quotes_values_yaml_would_not_read_as_strings() {
+        for s in [
+            "1.10", "2024", "-1", ".5", "true", "No", "off", "null", "~", "y",
+        ] {
+            assert_eq!(yaml_scalar(s), format!("'{s}'"), "{s}");
+        }
+        for s in ["main", "release/*", "v1.2", "ubuntu-22.04", "feature-x"] {
+            assert_eq!(yaml_scalar(s), s, "{s}");
+        }
+        let yaml = Generator::new().branches(["1.10"]).generate();
+        assert!(yaml.contains("branches: ['1.10']"));
+    }
+
+    #[test]
+    fn yaml_scalar_double_quotes_control_characters() {
+        assert_eq!(yaml_scalar("a\nb"), "\"a\\nb\"");
+        assert_eq!(yaml_scalar("q\"\\\u{1}"), "\"q\\\"\\\\\\u0001\"");
+        let yaml = Generator::new().workflow_name("CI\nevil: 1").generate();
+        assert!(yaml.starts_with("name: \"CI\\nevil: 1\"\n"), "{yaml}");
+    }
+
+    #[test]
+    fn yaml_block_scalar_keeps_plain_commands_plain() {
+        for s in [
+            "cargo build --verbose",
+            "MSRV (Rust 1.85)",
+            "dtolnay/rust-toolchain@1.85",
+            "cargo build --features 'a b' --verbose",
+        ] {
+            assert_eq!(yaml_block_scalar(s), s);
+        }
+        assert_eq!(yaml_block_scalar("x: y"), "'x: y'");
+        assert_eq!(yaml_block_scalar("a #b"), "'a #b'");
+        assert_eq!(yaml_block_scalar("ends:"), "'ends:'");
+        assert_eq!(yaml_block_scalar("'q"), "'''q'");
+        assert_eq!(yaml_block_scalar(""), "''");
+        assert_eq!(yaml_block_scalar("1.85"), "'1.85'");
+        assert_eq!(yaml_block_scalar("a\nb"), "\"a\\nb\"");
+    }
+
+    #[test]
+    fn msrv_value_cannot_break_out_of_the_job() {
+        let yaml = Generator::new().with_msrv("1.85 #x: y").generate();
+        assert!(
+            yaml.contains("    name: 'MSRV (Rust 1.85 #x: y)'\n"),
+            "{yaml}"
+        );
+        assert!(
+            yaml.contains("      - uses: 'dtolnay/rust-toolchain@1.85 #x: y'\n"),
+            "{yaml}"
+        );
+        let yaml = Generator::new()
+            .with_msrv("1.85\nmalicious: true")
+            .generate();
+        assert!(!yaml.contains("\nmalicious: true"), "{yaml}");
+    }
+
+    #[test]
+    fn msrv_job_resolves_lockfile_before_switching_toolchain() {
+        let yaml = Generator::new().with_msrv("1.75").generate();
+        let msrv = &yaml[yaml.find("  msrv:").unwrap()..];
+        let stable = msrv.find("dtolnay/rust-toolchain@stable").unwrap();
+        let resolve = msrv.find("cargo generate-lockfile").unwrap();
+        let pinned = msrv.find("dtolnay/rust-toolchain@1.75").unwrap();
+        let build = msrv.find("run: cargo build").unwrap();
+        assert!(
+            stable < resolve && resolve < pinned && pinned < build,
+            "{msrv}"
+        );
+        assert!(msrv.contains("if [ ! -f Cargo.lock ]; then cargo generate-lockfile; fi"));
+        assert!(msrv.contains("CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback"));
+    }
+
+    #[test]
+    fn features_with_shell_metacharacters_are_quoted() {
+        let yaml = Generator::new().features("a b; rm -rf /").generate();
+        assert!(
+            yaml.contains("run: cargo build --features 'a b; rm -rf /' --verbose"),
+            "{yaml}"
+        );
+        assert!(yaml.contains("shell: bash"));
+        let yaml = Generator::new().features("x #y").generate();
+        assert!(
+            yaml.contains("run: 'cargo build --features ''x #y'' --verbose'"),
+            "{yaml}"
+        );
+        // Plain lists are untouched and need no shell override.
+        let yaml = Generator::new().features("serde/std,derive").generate();
+        assert!(yaml.contains("run: cargo build --features serde/std,derive --verbose"));
+        assert!(!yaml.contains("shell: bash"));
+    }
+
+    #[test]
+    fn path_dep_clone_step_runs_under_bash() {
+        let yaml = Generator::new()
+            .matrix_os(["windows-latest"])
+            .with_path_dep(PathDep::new("dev-report", "https://example.com/r.git"))
+            .generate();
+        assert!(yaml.contains(
+            "      - name: Check out sibling crates (path deps)\n        shell: bash\n        run: |\n"
+        ));
+    }
+
+    #[test]
+    fn workspace_flag_reaches_clippy_and_docs() {
+        let yaml = Generator::new()
+            .with_workspace()
+            .with_clippy()
+            .with_docs()
+            .generate();
+        assert!(
+            yaml.contains("cargo clippy --workspace --all-targets --all-features -- -D warnings")
+        );
+        assert!(yaml.contains(
+            "cargo clippy --workspace --all-targets --no-default-features -- -D warnings"
+        ));
+        assert!(yaml.contains("cargo doc --workspace --all-features --no-deps"));
+        // Without the flag the commands are unchanged.
+        let yaml = Generator::new().with_clippy().with_docs().generate();
+        assert!(yaml.contains("cargo clippy --all-targets --all-features -- -D warnings"));
+        assert!(yaml.contains("cargo doc --all-features --no-deps"));
     }
 
     #[test]

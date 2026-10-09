@@ -7,23 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.3] - 2026-05-18
+## [0.9.3] - 2026-10-09
 
-Library / binary MSRV split. Library MSRV drops to 1.75; binary stays at 1.85.
+Library / binary MSRV split, plus YAML and shell quoting fixes from a
+review pass. Library MSRV drops to 1.75; the binary stays at 1.85.
+
+### Added
+
+- `VERSION` constant with the crate version as compiled, so tools that
+  bundle this crate can report what is actually linked.
+
+### Fixed
+
+- Generated YAML quoting:
+  - Matrix entries were written unquoted, so a value like `x, y` broke
+    the workflow.
+  - Branches, names and matrix entries that YAML reads as a bool, null
+    or number (`on`, `no`, `1.10` read as `1.1`) are now quoted, and
+    values containing control characters are double-quoted.
+  - The MSRV value went unquoted into `name:` and `uses:`, so it could
+    inject YAML.
+  - `run:`, `uses:` and job-name values are quoted only when YAML would
+    misread them; plain ones such as `cargo build --verbose` stay as
+    they were.
+- A `--features` value with spaces or shell metacharacters is now
+  single-quoted for the shell, and that step runs under `shell: bash`.
+  The path-dep clone step also runs under bash now; its POSIX quoting
+  broke under PowerShell on Windows runners.
+- `with_workspace` promised to reach every cargo invocation but skipped
+  the clippy and doc jobs; both now get `--workspace`.
+- CLI: `--msrv ""` produced `dtolnay/rust-toolchain@`. `--msrv` is now
+  checked to be a toolchain name, and empty or padded entries in
+  `--branches` and `--matrix` are trimmed and dropped.
 
 ### Changed
 
-- **`clap` is now an optional dependency gated by a new `cli` feature.** The `Generator` + `PathDep` library API does not depend on clap and compiles cleanly on Rust 1.75. The `dev-ci` CLI binary still requires clap (and therefore Rust 1.85) due to clap 4.6+'s `clap_derive` / `clap_lex` transitive chain moving to edition2024.
-- **`[[bin]] required-features = ["cli"]`** ensures the binary only builds when the `cli` feature is enabled.
-- **`default = ["cli"]`** keeps `cargo install dev-ci` working as before (defaults pull clap, build binary). Library consumers can disable defaults to stay at MSRV 1.75: `dev-ci = { version = "0.9", default-features = false }`.
-- **`rust-version` lowered from `1.85` to `1.75` in `Cargo.toml`** — reflects the library's MSRV. Cargo will fail with a clear edition2024 error if a user tries to compile dev-ci with the `cli` feature on a toolchain older than 1.85.
-- README MSRV badge updated to reflect the library/binary split.
+- **`clap` is now an optional dependency gated by a new `cli` feature.**
+  The `Generator` + `PathDep` library API does not depend on clap and
+  builds on Rust 1.75. The `dev-ci` binary still needs clap, and with it
+  Rust 1.85 (clap 4.6+'s `clap_derive` / `clap_lex` moved to edition
+  2024).
+- **`[[bin]] required-features = ["cli"]`**, and **`default = ["cli"]`**
+  keeps `cargo install dev-ci` working as before. Library users can
+  stay on 1.75 with `dev-ci = { version = "0.9", default-features = false }`.
+- `rust-version` lowered from `1.85` to `1.75` to reflect the library.
+- The generated MSRV job first resolves a `rust-version`-compatible
+  lockfile on stable (`CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback`)
+  when the project has no committed `Cargo.lock`. Without it, the old
+  toolchain picked the newest dependencies and could fail on ones that
+  need a newer Rust.
+- This repo's CI now checks both floors: the library on 1.75 and the
+  binary on 1.85. The MSRV job was only building the binary.
 
-### Notes
+### Documentation
 
-- `cargo install dev-ci` still works the same way (default features include `cli` → pulls clap → requires 1.85). End-user install experience is unchanged.
-- Downstream library consumers (`dev-tools` with `ci` feature, or anyone using the `Generator` API directly) get MSRV 1.75 when they disable defaults on the dev-ci dependency.
-- No public API change. `Generator`, `PathDep`, and `Target` types are byte-equivalent across this release.
+- README: exit codes (0 success, 1 bad values or I/O error, 2 for a
+  command-line parse error; it said parse errors exit 1), the MSRV
+  split, the generated MSRV job, and the quoting rules.
+- `docs/API.md` and the rustdoc for `with_msrv` and `with_path_dep`
+  updated.
 
 [0.9.3]: https://github.com/jamesgober/dev-ci/releases/tag/v0.9.3
 

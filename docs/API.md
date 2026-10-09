@@ -149,6 +149,10 @@ pub fn with_msrv(self, version: impl Into<String>) -> Self
 ```
 
 Include an MSRV verification job pinned to the given Rust version.
+When the repository has no committed `Cargo.lock`, the job first resolves
+one on stable with `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback`
+so dependency versions respect `rust-version`, then switches to the
+pinned toolchain and runs `cargo build`.
 
 | Parameter | Type                  | Description                              |
 |-----------|-----------------------|------------------------------------------|

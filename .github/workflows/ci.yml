@@ -76,8 +76,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --all-features --no-deps
 
+  # The library (no default features) is MSRV 1.75; the `dev-ci` binary
+  # pulls clap, whose current releases need 1.85. Check both floors.
   msrv:
-    name: MSRV (Rust 1.85)
+    name: MSRV (Rust 1.75, library)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check out sibling crates (path deps)
+        run: git clone --depth 1 https://github.com/jamesgober/dev-report.git ../dev-report
+      - uses: dtolnay/rust-toolchain@1.75
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --no-default-features --verbose
+
+  msrv-cli:
+    name: MSRV (Rust 1.85, binary)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

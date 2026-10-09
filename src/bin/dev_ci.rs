@@ -138,11 +138,12 @@ fn main() -> ExitCode {
 }
 
 fn run_generate(args: GenerateArgs) -> Result<(), String> {
+    let msrv = args.msrv.as_deref().map(validate_msrv).transpose()?;
     let mut gen = Generator::new()
         .target(args.target.to_lib())
         .workflow_name(args.workflow_name)
-        .branches(args.branches)
-        .matrix_os(args.matrix);
+        .branches(clean_list(&args.branches))
+        .matrix_os(clean_list(&args.matrix));
 
     if args.no_cache {
         gen = gen.with_cache(false);
@@ -172,19 +173,20 @@ fn run_generate(args: GenerateArgs) -> Result<(), String> {
             "fmt" => gen = gen.with_fmt(),
             "docs" => gen = gen.with_docs(),
             "msrv" => {
-                let v = args
-                    .msrv
-                    .as_deref()
-                    .ok_or_else(|| "--with msrv requires --msrv <VERSION>".to_string())?;
+                let v = msrv.ok_or_else(|| "--with msrv requires --msrv <VERSION>".to_string())?;
                 gen = gen.with_msrv(v);
             }
             other => return Err(format!("unknown job in --with: {other:?}")),
         }
     }
     // If --msrv was supplied without an explicit --with msrv, honor it too.
-    if !args.with.iter().any(|j| j.eq_ignore_ascii_case("msrv")) {
-        if let Some(v) = &args.msrv {
-            gen = gen.with_msrv(v.clone());
+    if !args
+        .with
+        .iter()
+        .any(|j| j.trim().eq_ignore_ascii_case("msrv"))
+    {
+        if let Some(v) = msrv {
+            gen = gen.with_msrv(v);
         }
     }
 
@@ -212,6 +214,35 @@ fn run_generate(args: GenerateArgs) -> Result<(), String> {
     fs::write(&target_path, yaml).map_err(|e| format!("write {}: {e}", target_path.display()))?;
     eprintln!("wrote {}", target_path.display());
     Ok(())
+}
+
+/// Trim each comma-separated entry and drop empty ones, so `main,,dev`
+/// and `ubuntu-latest, windows-latest` mean what they look like. An
+/// all-empty list falls back to the generator default.
+fn clean_list(items: &[String]) -> Vec<String> {
+    items
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Accept a toolchain name usable as `dtolnay/rust-toolchain@<ref>`:
+/// `1.75`, `1.75.0`, `stable`, `nightly-2025-01-01`. Anything else
+/// (empty, spaces, quotes, `#`, ...) would produce a job that cannot run.
+fn validate_msrv(raw: &str) -> Result<&str, String> {
+    let v = raw.trim();
+    if v.is_empty()
+        || !v
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err(format!(
+            "--msrv must be a Rust toolchain such as 1.75 or 1.75.0; got {raw:?}"
+        ));
+    }
+    Ok(v)
 }
 
 fn parse_path_dep(raw: &str) -> Result<(&str, &str), String> {
@@ -246,5 +277,25 @@ mod tests {
     fn parse_path_dep_rejects_empty_name_or_url() {
         assert!(parse_path_dep("=url").is_err());
         assert!(parse_path_dep("name=").is_err());
+    }
+
+    #[test]
+    fn validate_msrv_accepts_toolchains_and_rejects_junk() {
+        for ok in ["1.75", "1.75.0", " 1.85 ", "stable", "nightly-2025-01-01"] {
+            assert!(validate_msrv(ok).is_ok(), "{ok:?}");
+        }
+        assert_eq!(validate_msrv(" 1.85 ").unwrap(), "1.85");
+        for bad in ["", "  ", "1.85 #x", "1.85: y", "1.85\nx", "'1.85'"] {
+            assert!(validate_msrv(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn clean_list_trims_and_drops_empty_entries() {
+        let raw: Vec<String> = ["main", "", " dev ", "  "]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(clean_list(&raw), vec!["main", "dev"]);
     }
 }
