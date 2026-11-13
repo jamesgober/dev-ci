@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-12
+
+Safer generated workflows.
+
+### Security
+
+- A newline in a `PathDep` name or URL ended the `run: |` block of the
+  clone step, so the rest of the value was read as new workflow steps.
+  When a path-dep value holds a control character, the step is now
+  written as one double-quoted scalar. The CLI rejects `--path-dep`
+  names outside `[A-Za-z0-9._/-]` and URLs with whitespace, control
+  characters or `${{`.
+- `${{ ... }}` in a feature list or path-dep value was expanded by
+  GitHub before the shell ran. Every `${{` from those values is now
+  written as `$''{{`, which the shell joins back into `${{`.
+- Generated workflows set `permissions: contents: read`, so the job
+  token is read-only whatever the repository default is.
+- Every `actions/checkout` step sets `persist-credentials: false`, so
+  the token is not left in `.git/config` for build scripts and tests.
+
+### Documentation
+
+- The README said actions were "pinned". They are referenced by tag,
+  which can move. The README now says so and explains how to pin to a
+  commit SHA.
+
+### Changed
+
+- Depends on `dev-report` 0.9.9 from crates.io instead of a sibling
+  checkout.
+
+[0.9.4]: https://github.com/jamesgober/dev-ci/releases/tag/v0.9.4
+
 ## [0.9.3] - 2026-10-09
 
 Library / binary MSRV split, plus YAML and shell quoting fixes from a
