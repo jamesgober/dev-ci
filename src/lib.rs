@@ -382,6 +382,10 @@ impl Generator {
         out.push_str("  pull_request:\n");
         write_branch_list(out, "    ", &self.branches);
         out.push('\n');
+        // Least privilege for GITHUB_TOKEN: the jobs only read the
+        // repository. Without this the token gets the repository or
+        // organisation default, which is read-write on older setups.
+        out.push_str("permissions:\n  contents: read\n\n");
         out.push_str("env:\n  CARGO_TERM_COLOR: always\n\n");
     }
 
@@ -442,7 +446,7 @@ impl Generator {
         out.push_str("    name: Rustfmt\n");
         out.push_str("    runs-on: ubuntu-latest\n");
         out.push_str("    steps:\n");
-        out.push_str("      - uses: actions/checkout@v5\n");
+        write_checkout(out);
         out.push_str("      - uses: dtolnay/rust-toolchain@stable\n");
         out.push_str("        with:\n");
         out.push_str("          components: rustfmt\n");
@@ -513,23 +517,41 @@ impl Generator {
     }
 
     fn write_checkout_and_path_deps(&self, out: &mut String) {
-        out.push_str("      - uses: actions/checkout@v5\n");
-        if !self.path_deps.is_empty() {
-            out.push_str("      - name: Check out sibling crates (path deps)\n");
-            // The arguments are quoted for a POSIX shell. Pin the shell so
-            // the step means the same thing on Windows runners, whose
-            // default shell is PowerShell.
-            out.push_str("        shell: bash\n");
-            out.push_str("        run: |\n");
-            for dep in &self.path_deps {
+        write_checkout(out);
+        if self.path_deps.is_empty() {
+            return;
+        }
+        out.push_str("      - name: Check out sibling crates (path deps)\n");
+        // The arguments are quoted for a POSIX shell. Pin the shell so
+        // the step means the same thing on Windows runners, whose
+        // default shell is PowerShell.
+        out.push_str("        shell: bash\n");
+        let lines: Vec<String> = self
+            .path_deps
+            .iter()
+            .map(|dep| {
                 let target = format!("../{}", dep.name);
-                writeln!(
-                    out,
-                    "          git clone --depth 1 {} {}",
+                format!(
+                    "git clone --depth 1 {} {}",
                     shell_arg(&dep.repo_url),
                     shell_arg(&target),
                 )
-                .unwrap();
+            })
+            .collect();
+        if lines.iter().any(|l| l.chars().any(char::is_control)) {
+            // A control character (a newline, say) inside a literal block
+            // would end the block and start new YAML. Emit the script as
+            // one double-quoted scalar instead, where it is escaped.
+            writeln!(
+                out,
+                "        run: {}",
+                yaml_double_quoted(&lines.join("\n"))
+            )
+            .unwrap();
+        } else {
+            out.push_str("        run: |\n");
+            for line in &lines {
+                writeln!(out, "          {line}").unwrap();
             }
         }
     }
@@ -614,6 +636,14 @@ impl Generator {
         }
         s
     }
+}
+
+/// `actions/checkout` without leaving the job's token in `.git/config`,
+/// where every build script and test in later steps could read it.
+fn write_checkout(out: &mut String) {
+    out.push_str("      - uses: actions/checkout@v5\n");
+    out.push_str("        with:\n");
+    out.push_str("          persist-credentials: false\n");
 }
 
 fn write_branch_list(out: &mut String, indent: &str, branches: &[String]) {
@@ -788,12 +818,20 @@ fn yaml_block_scalar(s: &str) -> String {
 /// Single-quoting in POSIX shell is literal — nothing inside is
 /// interpreted, so the only escape needed is for embedded `'`, which
 /// we replace with `'\''` (close-quote, escaped quote, re-open).
+///
+/// GitHub Actions expands `${{ ... }}` in a `run:` value before the
+/// shell sees it, quotes or not. Every `${{` is therefore written as
+/// `$''{{`: two adjacent single-quoted strings that the shell joins back
+/// into `${{`, but that GitHub does not read as an expression.
 fn shell_arg(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
-    for ch in s.chars() {
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
         if ch == '\'' {
             out.push_str("'\\''");
+        } else if ch == '$' && chars.peek() == Some(&'{') {
+            out.push_str("$''");
         } else {
             out.push(ch);
         }
@@ -1122,6 +1160,70 @@ mod tests {
             .with_msrv("1.85\nmalicious: true")
             .generate();
         assert!(!yaml.contains("\nmalicious: true"), "{yaml}");
+    }
+
+    #[test]
+    fn path_dep_newline_cannot_add_workflow_steps() {
+        let name = "dev-report'\n      - name: injected step\n        run: echo INJECTED\n      - run: echo '";
+        let yaml = Generator::new()
+            .with_path_dep(PathDep::new(name, "https://example.com/dev-report.git"))
+            .with_path_dep(PathDep::new(
+                "ok",
+                "https://example.com/ok.git\n  evil: true",
+            ))
+            .generate();
+        assert!(!yaml.contains("\n      - name: injected step"), "{yaml}");
+        assert!(!yaml.contains("\n        run: echo INJECTED"), "{yaml}");
+        assert!(!yaml.contains("\n  evil: true"), "{yaml}");
+        // Every line of the clone step stays inside one scalar.
+        let step = yaml
+            .lines()
+            .find(|l| l.starts_with("        run: \"git clone"))
+            .unwrap_or_else(|| panic!("{yaml}"));
+        assert!(step.ends_with('"'), "{step}");
+        assert!(step.contains("\\n      - name: injected step"), "{step}");
+    }
+
+    #[test]
+    fn expressions_in_run_values_are_not_expanded() {
+        let yaml = Generator::new()
+            .features("${{ secrets.TOKEN }}")
+            .with_path_dep(PathDep::new(
+                "x${{ github.token }}",
+                "https://example.com/${{ secrets.TOKEN }}.git",
+            ))
+            .generate();
+        assert!(!yaml.contains("${{ secrets"), "{yaml}");
+        assert!(!yaml.contains("${{ github.token"), "{yaml}");
+        // The shell still receives the literal text.
+        assert!(
+            yaml.contains("'https://example.com/$''{{ secrets.TOKEN }}.git'"),
+            "{yaml}"
+        );
+        // Generator expressions of its own are untouched.
+        assert!(yaml.contains("runs-on: ${{ matrix.os }}"));
+    }
+
+    #[test]
+    fn token_is_read_only_and_not_persisted() {
+        let yaml = Generator::new()
+            .with_clippy()
+            .with_fmt()
+            .with_docs()
+            .with_msrv("1.75")
+            .with_path_dep(PathDep::new("dev-report", "https://example.com/r.git"))
+            .generate();
+        assert!(
+            yaml.contains("\npermissions:\n  contents: read\n\njobs:")
+                || yaml.contains("\npermissions:\n  contents: read\n\nenv:"),
+            "{yaml}"
+        );
+        let checkouts = yaml.matches("- uses: actions/checkout@v5\n").count();
+        assert_eq!(checkouts, 5, "{yaml}");
+        let protected = yaml
+            .matches("- uses: actions/checkout@v5\n        with:\n          persist-credentials: false\n")
+            .count();
+        assert_eq!(protected, checkouts, "{yaml}");
     }
 
     #[test]

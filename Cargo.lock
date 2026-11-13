@@ -155,7 +155,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "dev-ci"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "clap",
  "dev-report",
@@ -163,7 +163,9 @@ dependencies = [
 
 [[package]]
 name = "dev-report"
-version = "0.9.7"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bb4e2b2a16adeb80f9a9443d0c2459d3f9aa6932571263662289381a841f604"
 dependencies = [
  "chrono",
  "serde",

@@ -254,6 +254,23 @@ fn parse_path_dep(raw: &str) -> Result<(&str, &str), String> {
             "--path-dep name and url must be non-empty; got {raw:?}"
         ));
     }
+    // The name becomes a directory next to the checkout, so keep it to
+    // plain path characters. The URL may not carry whitespace, control
+    // characters or GitHub expressions.
+    let name_ok = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+    if !name_ok || name.split('/').any(|part| part.is_empty() || part == "..") {
+        return Err(format!(
+            "--path-dep name may only use letters, digits, '-', '_', '.' and '/' \
+             (no empty or '..' parts); got {name:?}"
+        ));
+    }
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) || url.contains("${{") {
+        return Err(format!(
+            "--path-dep url may not contain whitespace, control characters or '${{{{'; got {url:?}"
+        ));
+    }
     Ok((name, url))
 }
 
@@ -271,6 +288,16 @@ mod tests {
     #[test]
     fn parse_path_dep_rejects_missing_equals() {
         assert!(parse_path_dep("foo").is_err());
+    }
+
+    #[test]
+    fn parse_path_dep_rejects_unsafe_values() {
+        assert!(parse_path_dep("dev-report'\n  - run: x=https://e.com/r.git").is_err());
+        assert!(parse_path_dep("a b=https://e.com/r.git").is_err());
+        assert!(parse_path_dep("../x=https://e.com/r.git").is_err());
+        assert!(parse_path_dep("x=https://e.com/r.git\n").is_err());
+        assert!(parse_path_dep("x=https://e.com/${{ secrets.T }}.git").is_err());
+        assert!(parse_path_dep("mod-collection/mod-tempdir=https://e.com/m.git").is_ok());
     }
 
     #[test]

@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-    <strong>Generate calibrated GitHub Actions workflows for Rust crates.</strong> Library API <em>plus</em> CLI binary. Byte-deterministic output. <code>actions/checkout@v5</code> pinned everywhere.
+    <strong>Generate calibrated GitHub Actions workflows for Rust crates.</strong> Library API <em>plus</em> CLI binary. Byte-deterministic output. Read-only token, no persisted checkout credentials.
 </p>
 
 <br>
@@ -33,7 +33,7 @@
 `dev-ci` generates calibrated CI workflow files (currently GitHub
 Actions; other platforms in the roadmap) from a structured Rust API
 plus a CLI front-end. One source of truth, byte-deterministic output,
-every checkout pinned at `actions/checkout@v5`.
+`actions/checkout@v5` in every job.
 
 The runtime side — a GitHub Action that runs the entire `dev-*`
 verification collection end-to-end inside one job and uploads SARIF —
@@ -137,6 +137,31 @@ number (a branch named `1.10` stays the string `1.10`); a `--features`
 value with spaces or shell metacharacters is single-quoted for the shell
 and that step runs under `bash`. Plain values such as `main`,
 `release/*`, `ubuntu-latest` and `serde/std,derive` are emitted as is.
+
+Path-dep names and URLs are single-quoted for the shell. If one holds a
+control character such as a newline, the clone step is written as a
+double-quoted YAML scalar, so the value cannot end the step and add new
+ones. GitHub expands `${{ ... }}` in a `run:` value before the shell
+runs, so every `${{` coming from a feature list or path dep is written
+as `$''{{`, which the shell reads back as `${{` and GitHub leaves alone.
+The CLI goes further and rejects `--path-dep` names outside
+`[A-Za-z0-9._/-]` and URLs with whitespace, control characters or
+`${{`.
+
+## Token and actions
+
+Generated workflows set `permissions: contents: read` at the top, so
+`GITHUB_TOKEN` can only read the repository whatever the repository or
+organisation default is. Every `actions/checkout` step sets
+`persist-credentials: false`, so the token is not left in `.git/config`
+for build scripts and tests to read.
+
+Actions are referenced by tag (`actions/checkout@v5`,
+`dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`), not by
+commit SHA. A tag can be moved by whoever controls the action's
+repository. If you need that guarantee, replace each tag with a full
+commit SHA in the generated file (keep the tag as a comment) and update
+the SHAs on purpose.
 
 ## Determinism
 
